@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8001'
 
-// Country positions on radar: [angle_from_north_deg, radius_0_to_1]
 const POSITIONS = {
   US: [268, 0.62], CA: [278, 0.52], BR: [295, 0.74], VE: [302, 0.72],
   UK: [348, 0.40], FR: [355, 0.38], DE: [8, 0.36], IT: [14, 0.44],
@@ -12,20 +11,23 @@ const POSITIONS = {
   YE: [55, 0.74], IQ: [45, 0.64], EG: [26, 0.66], LY: [18, 0.68],
   PK: [72, 0.68], IN: [82, 0.68], AF: [65, 0.72],
   CN: [95, 0.62], KP: [112, 0.56], KR: [116, 0.58], JP: [120, 0.60],
-  TW: [118, 0.62], PH: [128, 0.72], MM: [105, 0.70],
-  AU: [130, 0.82], NZ: [138, 0.88],
+  TW: [118, 0.62], AU: [130, 0.82],
   NATO: [358, 0.22], EU: [6, 0.28], UN: [0, 0.14], MULTI: [0, 0.10],
 }
 
-const SEV_COLOR = { CRITICAL: '#ff2020', HIGH: '#ff7700', MEDIUM: '#ffcc00', LOW: '#00ff88' }
-const SEV_RGBA = { CRITICAL: '255,32,32', HIGH: '255,119,0', MEDIUM: '255,204,0', LOW: '0,255,136' }
+const SEV = {
+  CRITICAL: { color: '#cc0000', bg: '#fff0f0', border: '#cc000033', label: 'CRITICO' },
+  HIGH:     { color: '#cc5500', bg: '#fff4ee', border: '#cc550033', label: 'ALTO' },
+  MEDIUM:   { color: '#997700', bg: '#fffaee', border: '#99770033', label: 'MEDIO' },
+  LOW:      { color: '#006633', bg: '#eefff6', border: '#00663333', label: 'BASSO' },
+}
 
 const TYPE_ICON = {
   PROCUREMENT: '🛡', EXERCISE: '⚔', POLICY: '📋', THREAT: '⚠',
   ALLIANCE: '🤝', SANCTIONS: '🚫', INCIDENT: '💥', INTELLIGENCE: '👁', DEPLOYMENT: '🚀',
 }
 
-function maxSeverity(cs) {
+function maxSev(cs) {
   if (!cs) return null
   if (cs.critical > 0) return 'CRITICAL'
   if (cs.high > 0) return 'HIGH'
@@ -44,7 +46,7 @@ function RadarCanvas({ countryStats }) {
     const ctx = canvas.getContext('2d')
     const W = canvas.width, H = canvas.height
     const cx = W / 2, cy = H / 2
-    const maxR = W / 2 - 24
+    const maxR = W / 2 - 20
 
     const toXY = (angleDeg, radius) => {
       const r = (angleDeg - 90) * Math.PI / 180
@@ -52,20 +54,21 @@ function RadarCanvas({ countryStats }) {
     }
 
     const draw = () => {
-      ctx.fillStyle = '#030810'
+      // Dark radar screen background
+      ctx.fillStyle = '#0b1a2e'
       ctx.fillRect(0, 0, W, H)
 
-      // Concentric rings
+      // Rings
       for (let i = 1; i <= 4; i++) {
         ctx.beginPath()
         ctx.arc(cx, cy, maxR * i / 4, 0, Math.PI * 2)
-        ctx.strokeStyle = `rgba(0,180,80,${0.06 + i * 0.03})`
+        ctx.strokeStyle = `rgba(0,160,255,${0.08 + i * 0.04})`
         ctx.lineWidth = 1
         ctx.stroke()
       }
 
       // Spokes
-      ctx.strokeStyle = 'rgba(0,180,80,0.07)'
+      ctx.strokeStyle = 'rgba(0,160,255,0.08)'
       ctx.lineWidth = 1
       for (let a = 0; a < 360; a += 30) {
         const rad = (a - 90) * Math.PI / 180
@@ -78,33 +81,31 @@ function RadarCanvas({ countryStats }) {
       // Outer ring
       ctx.beginPath()
       ctx.arc(cx, cy, maxR, 0, Math.PI * 2)
-      ctx.strokeStyle = 'rgba(0,220,100,0.25)'
+      ctx.strokeStyle = 'rgba(0,180,255,0.35)'
       ctx.lineWidth = 2
       ctx.stroke()
 
-      // Sweep trail
+      // Sweep
       const sweep = sweepRef.current
       const sweepRad = (sweep - 90) * Math.PI / 180
-      const trailWidth = Math.PI / 5
       ctx.save()
       ctx.beginPath()
       ctx.moveTo(cx, cy)
-      ctx.arc(cx, cy, maxR, sweepRad - trailWidth, sweepRad)
+      ctx.arc(cx, cy, maxR, sweepRad - Math.PI / 5, sweepRad)
       ctx.closePath()
       const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, maxR)
-      grad.addColorStop(0, 'rgba(0,255,100,0.0)')
-      grad.addColorStop(0.6, 'rgba(0,255,100,0.04)')
-      grad.addColorStop(1, 'rgba(0,255,100,0.14)')
+      grad.addColorStop(0, 'rgba(0,200,255,0.0)')
+      grad.addColorStop(0.7, 'rgba(0,200,255,0.05)')
+      grad.addColorStop(1, 'rgba(0,200,255,0.18)')
       ctx.fillStyle = grad
       ctx.fill()
       ctx.restore()
 
-      // Sweep line
       ctx.beginPath()
       ctx.moveTo(cx, cy)
       ctx.lineTo(cx + maxR * Math.cos(sweepRad), cy + maxR * Math.sin(sweepRad))
-      ctx.strokeStyle = 'rgba(0,255,100,0.75)'
-      ctx.lineWidth = 1.5
+      ctx.strokeStyle = 'rgba(0,220,255,0.9)'
+      ctx.lineWidth = 2
       ctx.stroke()
 
       // Country blips
@@ -112,38 +113,35 @@ function RadarCanvas({ countryStats }) {
       Object.entries(POSITIONS).forEach(([code, [angle, radius]]) => {
         const { x, y } = toXY(angle, radius)
         const cs = stats[code]
-        const sev = maxSeverity(cs)
-        const rgba = sev ? SEV_RGBA[sev] : '0,150,255'
-        const hex = sev ? SEV_COLOR[sev] : '#0066aa'
-        const size = cs ? Math.min(3 + cs.count * 1.2, 10) : 2.5
+        const sev = maxSev(cs)
+        const cfg = sev ? SEV[sev] : null
+        const dotColor = cfg ? cfg.color : '#336699'
+        const size = cs ? Math.min(4 + cs.count * 1.5, 13) : 3.5
 
-        // Glow for active countries
-        if (sev) {
-          const glow = ctx.createRadialGradient(x, y, 0, x, y, size * 4)
-          glow.addColorStop(0, `rgba(${rgba},0.5)`)
-          glow.addColorStop(1, `rgba(${rgba},0)`)
+        if (sev && sev !== 'LOW') {
+          const glow = ctx.createRadialGradient(x, y, 0, x, y, size * 5)
+          glow.addColorStop(0, dotColor + 'aa')
+          glow.addColorStop(1, dotColor + '00')
           ctx.fillStyle = glow
           ctx.beginPath()
-          ctx.arc(x, y, size * 4, 0, Math.PI * 2)
+          ctx.arc(x, y, size * 5, 0, Math.PI * 2)
           ctx.fill()
         }
 
-        // Dot
         ctx.beginPath()
         ctx.arc(x, y, size, 0, Math.PI * 2)
-        ctx.fillStyle = sev ? hex : 'rgba(0,120,200,0.45)'
+        ctx.fillStyle = dotColor
         ctx.fill()
 
-        // Label
-        ctx.fillStyle = sev ? `rgba(${rgba},0.9)` : 'rgba(160,200,220,0.55)'
-        ctx.font = `${sev ? '9.5' : '8.5'}px monospace`
-        ctx.fillText(code, x + size + 3, y + 3.5)
+        ctx.fillStyle = sev ? '#ffffff' : 'rgba(180,210,255,0.7)'
+        ctx.font = `bold ${sev ? '10' : '9'}px monospace`
+        ctx.fillText(code, x + size + 3, y + 4)
       })
 
       // Center
       ctx.beginPath()
-      ctx.arc(cx, cy, 3, 0, Math.PI * 2)
-      ctx.fillStyle = '#00ff88'
+      ctx.arc(cx, cy, 4, 0, Math.PI * 2)
+      ctx.fillStyle = '#00ccff'
       ctx.fill()
 
       sweepRef.current = (sweep + 0.4) % 360
@@ -155,8 +153,8 @@ function RadarCanvas({ countryStats }) {
   }, [countryStats])
 
   return (
-    <canvas ref={canvasRef} width={480} height={480}
-      style={{ borderRadius: '50%', boxShadow: '0 0 60px rgba(0,255,100,0.12), 0 0 120px rgba(0,255,100,0.05)' }} />
+    <canvas ref={canvasRef} width={460} height={460}
+      style={{ borderRadius: '50%', boxShadow: '0 0 0 6px #1e3a5f, 0 8px 40px rgba(0,100,200,0.4)' }} />
   )
 }
 
@@ -178,7 +176,10 @@ export default function App() {
         fetch(`${API}/api/alerts`).then(x => x.json()),
         fetch(`${API}/api/stats`).then(x => x.json()),
       ])
-      setRadar(r); setEvents(e); setAlerts(a); setStats(s)
+      setRadar(r)
+      setEvents(Array.isArray(e) ? e : [])
+      setAlerts(Array.isArray(a) ? a : [])
+      setStats(s)
     } catch (err) { console.error(err) }
     finally { setLoading(false) }
   }, [])
@@ -197,116 +198,149 @@ export default function App() {
   )
 
   if (loading) return (
-    <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', background: '#030810' }}>
-      <div style={{ color: '#00ff88', fontSize: 13, letterSpacing: 4 }}>INITIALIZING RADAR...</div>
+    <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', background: '#f0f4f8', flexDirection: 'column', gap: 16 }}>
+      <div style={{ width: 48, height: 48, border: '4px solid #0066cc', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+      <div style={{ color: '#0a2a5a', fontSize: 18, fontWeight: 700, letterSpacing: 2 }}>CARICAMENTO RADAR...</div>
+      <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
     </div>
   )
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: '#030810', color: '#c0d8e0', fontFamily: "'Courier New', monospace", overflow: 'hidden' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: '#eef2f8', fontFamily: 'system-ui, -apple-system, sans-serif', overflow: 'hidden' }}>
 
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 16px', borderBottom: '1px solid #0a2a1a', background: '#04080f', flexShrink: 0 }}>
-        <span style={{ fontSize: 16, fontWeight: 700, color: '#00ff88', letterSpacing: 3 }}>⬡ GEOPOLITICAL RADAR</span>
+      <div style={{ background: '#0a1f3d', color: '#ffffff', padding: '10px 20px', display: 'flex', alignItems: 'center', gap: 14, boxShadow: '0 2px 12px rgba(0,0,0,0.3)', flexShrink: 0 }}>
+        <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: 2, color: '#4db8ff' }}>⬡</span>
+        <span style={{ fontSize: 18, fontWeight: 800, letterSpacing: 1 }}>GEOPOLITICAL RADAR</span>
+        <div style={{ width: 1, height: 28, background: '#ffffff22', margin: '0 4px' }} />
         {stats && <>
-          <Pill color="#ff2020">{stats.by_severity?.CRITICAL || 0} CRITICAL</Pill>
-          <Pill color="#ff7700">{stats.by_severity?.HIGH || 0} HIGH</Pill>
-          <Pill color="#0088cc">{stats.total || 0} EVENTS</Pill>
+          <StatBadge bg="#cc0000" label="CRITICO" value={stats.by_severity?.CRITICAL || 0} />
+          <StatBadge bg="#cc5500" label="ALTO" value={stats.by_severity?.HIGH || 0} />
+          <StatBadge bg="#0055aa" label="EVENTI" value={stats.total || 0} />
         </>}
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center' }}>
           {stats?.last_refresh && (
-            <span style={{ fontSize: 10, color: '#3a5a60' }}>
-              SYNC {new Date(stats.last_refresh).toLocaleTimeString()}
+            <span style={{ fontSize: 12, color: '#aaccee' }}>
+              Aggiornato: {new Date(stats.last_refresh).toLocaleTimeString('it-IT')}
             </span>
           )}
-          <button onClick={handleRefresh} disabled={refreshing}
-            style={{ padding: '3px 12px', background: '#001a0a', border: '1px solid #00ff8855', color: '#00ff88', borderRadius: 3, cursor: 'pointer', fontSize: 10, letterSpacing: 1 }}>
-            {refreshing ? '⟳ SCANNING...' : '↻ REFRESH'}
+          <button onClick={handleRefresh} disabled={refreshing} style={{
+            padding: '7px 18px', background: refreshing ? '#334' : '#1a6abf', color: '#fff',
+            border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 13, fontWeight: 600,
+            boxShadow: '0 2px 6px rgba(0,0,0,0.3)'
+          }}>
+            {refreshing ? '⟳ Scansione...' : '↻ Aggiorna'}
           </button>
         </div>
       </div>
 
       {/* Body */}
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden', gap: 0 }}>
 
-        {/* Left — Alerts */}
-        <div style={{ width: 230, borderRight: '1px solid #0a2a1a', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <SectionTitle>⚠ ALERTS ({alerts.length})</SectionTitle>
-          <div style={{ flex: 1, overflowY: 'auto' }}>
+        {/* Left panel */}
+        <div style={{ width: 250, background: '#ffffff', borderRight: '2px solid #d0dce8', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '2px 0 8px rgba(0,0,0,0.06)' }}>
+
+          <PanelTitle icon="⚠️" title={`ALERT ATTIVI (${alerts.length})`} bg="#cc0000" />
+          <div style={{ flex: '0 0 auto', maxHeight: '38%', overflowY: 'auto' }}>
             {alerts.length === 0
-              ? <Empty>No active alerts</Empty>
-              : alerts.map(a => (
-                <div key={a.id} style={{ padding: '8px 10px', borderBottom: '1px solid #0a1520', borderLeft: `3px solid ${SEV_COLOR[a.severity] || '#333'}` }}>
-                  <div style={{ fontSize: 9, color: SEV_COLOR[a.severity], marginBottom: 3, letterSpacing: 1 }}>
-                    {a.severity} · {a.event_type}
+              ? <EmptyMsg>Nessun alert attivo</EmptyMsg>
+              : alerts.map(a => {
+                const sc = SEV[a.severity] || SEV.LOW
+                return (
+                  <div key={a.id} style={{ padding: '10px 12px', borderBottom: '1px solid #e8eef4', borderLeft: `4px solid ${sc.color}`, background: sc.bg }}>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: sc.color, background: sc.border, padding: '1px 6px', borderRadius: 3 }}>{sc.label}</span>
+                      <span style={{ fontSize: 11, color: '#556', fontWeight: 500 }}>{a.event_type}</span>
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#0a1628', lineHeight: 1.4 }}>{a.title_clean || a.title}</div>
+                    <div style={{ fontSize: 11, color: '#667788', marginTop: 3 }}>{(a.countries || []).slice(0, 4).join(' · ')}</div>
                   </div>
-                  <div style={{ fontSize: 10.5, lineHeight: 1.45 }}>{a.title_clean || a.title}</div>
-                  <div style={{ fontSize: 9, color: '#3a5a60', marginTop: 3 }}>{(a.countries || []).slice(0, 4).join(' · ')}</div>
-                </div>
-              ))}
+                )
+              })}
           </div>
 
-          <SectionTitle>FILTERS</SectionTitle>
-          <div style={{ padding: '6px 10px', borderBottom: '1px solid #0a2a1a' }}>
-            <div style={{ fontSize: 9, color: '#3a5a60', marginBottom: 4, letterSpacing: 1 }}>SEVERITY</div>
-            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-              {['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].map(sv => (
-                <Chip key={sv} active={filterSev === sv} color={SEV_COLOR[sv]}
-                  onClick={() => setFilterSev(filterSev === sv ? null : sv)}>{sv}</Chip>
-              ))}
-            </div>
-          </div>
-          <div style={{ padding: '6px 10px', borderBottom: '1px solid #0a2a1a' }}>
-            <div style={{ fontSize: 9, color: '#3a5a60', marginBottom: 4, letterSpacing: 1 }}>TYPE</div>
-            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-              {Object.entries(TYPE_ICON).map(([type, icon]) => (
-                <Chip key={type} active={filterType === type}
-                  onClick={() => setFilterType(filterType === type ? null : type)}>{icon}</Chip>
+          <PanelTitle icon="🔍" title="FILTRI" bg="#334466" />
+          <div style={{ padding: '10px 12px', borderBottom: '1px solid #d0dce8' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#445566', marginBottom: 6, letterSpacing: 1 }}>GRAVITÀ</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {Object.entries(SEV).map(([key, cfg]) => (
+                <button key={key} onClick={() => setFilterSev(filterSev === key ? null : key)} style={{
+                  display: 'flex', alignItems: 'center', gap: 8, padding: '5px 10px',
+                  background: filterSev === key ? cfg.bg : 'transparent',
+                  border: `2px solid ${filterSev === key ? cfg.color : '#d0dce8'}`,
+                  borderRadius: 6, cursor: 'pointer', textAlign: 'left'
+                }}>
+                  <span style={{ width: 10, height: 10, borderRadius: '50%', background: cfg.color, flexShrink: 0 }} />
+                  <span style={{ fontSize: 12, fontWeight: filterSev === key ? 700 : 500, color: filterSev === key ? cfg.color : '#334' }}>{cfg.label}</span>
+                </button>
               ))}
             </div>
           </div>
 
-          <SectionTitle>BY TYPE</SectionTitle>
-          <div style={{ overflowY: 'auto', flex: 1 }}>
+          <PanelTitle icon="📊" title="PER TIPO" bg="#334466" />
+          <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
             {stats && Object.entries(stats.by_type || {}).sort((a, b) => b[1] - a[1]).map(([type, count]) => (
-              <div key={type} style={{ padding: '3px 10px', display: 'flex', justifyContent: 'space-between', fontSize: 10 }}>
-                <span style={{ color: '#8aaab0' }}>{TYPE_ICON[type] || '·'} {type}</span>
-                <span style={{ color: '#00cc66' }}>{count}</span>
-              </div>
+              <button key={type} onClick={() => setFilterType(filterType === type ? null : type)} style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                width: '100%', padding: '7px 14px', border: 'none', textAlign: 'left',
+                background: filterType === type ? '#e8f0ff' : 'transparent',
+                borderLeft: filterType === type ? '3px solid #0066cc' : '3px solid transparent',
+                cursor: 'pointer'
+              }}>
+                <span style={{ fontSize: 13, color: '#223', fontWeight: 500 }}>{TYPE_ICON[type] || '·'} {type}</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: '#0066cc', background: '#e0ecff', padding: '1px 8px', borderRadius: 10 }}>{count}</span>
+              </button>
             ))}
           </div>
         </div>
 
         {/* Center — Radar */}
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-          <RadarCanvas countryStats={radar?.country_stats} />
-        </div>
-
-        {/* Right — Events */}
-        <div style={{ width: 310, borderLeft: '1px solid #0a2a1a', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <SectionTitle>EVENTS ({filtered.length})</SectionTitle>
-          <div style={{ flex: 1, overflowY: 'auto' }}>
-            {filtered.length === 0
-              ? <Empty>No events — click REFRESH to load</Empty>
-              : filtered.map(e => (
-                <div key={e.id} style={{ padding: '8px 10px', borderBottom: '1px solid #0a1520' }}>
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 3 }}>
-                    <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: SEV_COLOR[e.severity] || '#444', flexShrink: 0 }} />
-                    <span style={{ fontSize: 9, color: '#4a6a70', letterSpacing: 1 }}>{e.event_type}</span>
-                    <span style={{ fontSize: 9, color: '#3a5060', marginLeft: 'auto' }}>
-                      {(e.countries || []).slice(0, 3).join(' ')}
-                    </span>
-                  </div>
-                  <div style={{ fontSize: 11, lineHeight: 1.45, marginBottom: 4 }}>{e.title_clean || e.title}</div>
-                  {e.summary_it && (
-                    <div style={{ fontSize: 10, color: '#4a6a70', lineHeight: 1.4, marginBottom: 4 }}>{e.summary_it}</div>
-                  )}
-                  <div style={{ display: 'flex', gap: 8, fontSize: 9, color: '#2a4a50' }}>
-                    <span>{e.source}</span>
-                    {e.url && <a href={e.url} target="_blank" rel="noreferrer" style={{ color: '#006688', textDecoration: 'none' }}>→ source</a>}
-                  </div>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#dde6f0', padding: 20 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
+            <RadarCanvas countryStats={radar?.country_stats} />
+            <div style={{ display: 'flex', gap: 20 }}>
+              {Object.entries(SEV).map(([key, cfg]) => (
+                <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <span style={{ width: 10, height: 10, borderRadius: '50%', background: cfg.color }} />
+                  <span style={{ fontSize: 12, fontWeight: 600, color: '#334455' }}>{cfg.label}</span>
                 </div>
               ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Right panel — Events */}
+        <div style={{ width: 360, background: '#ffffff', borderLeft: '2px solid #d0dce8', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '-2px 0 8px rgba(0,0,0,0.06)' }}>
+          <PanelTitle icon="📡" title={`EVENTI RILEVATI (${filtered.length})`} bg="#0055aa" />
+          <div style={{ flex: 1, overflowY: 'auto' }}>
+            {filtered.length === 0
+              ? <EmptyMsg>Nessun evento — clicca Aggiorna per caricare</EmptyMsg>
+              : filtered.map(e => {
+                const sc = SEV[e.severity] || SEV.LOW
+                return (
+                  <div key={e.id} style={{ padding: '12px 14px', borderBottom: '1px solid #e8eef4', borderLeft: `4px solid ${sc.color}`, background: '#ffffff' }}>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 5, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: sc.color, background: sc.bg, border: `1px solid ${sc.border}`, padding: '1px 7px', borderRadius: 3 }}>
+                        {sc.label}
+                      </span>
+                      <span style={{ fontSize: 11, color: '#667', fontWeight: 600 }}>{TYPE_ICON[e.event_type]} {e.event_type}</span>
+                      <span style={{ marginLeft: 'auto', fontSize: 11, color: '#445566', fontWeight: 600 }}>
+                        {(e.countries || []).slice(0, 3).join(' · ')}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: '#0a1628', lineHeight: 1.45, marginBottom: 6 }}>
+                      {e.title_clean || e.title}
+                    </div>
+                    {e.summary_it && (
+                      <div style={{ fontSize: 12, color: '#445', lineHeight: 1.55, marginBottom: 6 }}>{e.summary_it}</div>
+                    )}
+                    <div style={{ display: 'flex', gap: 10, fontSize: 11, color: '#889' }}>
+                      <span>{e.source}</span>
+                      {e.url && <a href={e.url} target="_blank" rel="noreferrer" style={{ color: '#0066cc', fontWeight: 600, textDecoration: 'none' }}>→ Fonte</a>}
+                    </div>
+                  </div>
+                )
+              })}
           </div>
         </div>
       </div>
@@ -314,33 +348,23 @@ export default function App() {
   )
 }
 
-function Pill({ color, children }) {
+function StatBadge({ bg, label, value }) {
   return (
-    <span style={{ background: color + '18', border: `1px solid ${color}40`, color, borderRadius: 3, padding: '2px 8px', fontSize: 10, letterSpacing: 1 }}>
-      {children}
-    </span>
-  )
-}
-
-function SectionTitle({ children }) {
-  return (
-    <div style={{ padding: '6px 10px', fontSize: 9, letterSpacing: 2, color: '#00cc66', borderBottom: '1px solid #0a2a1a', flexShrink: 0 }}>
-      {children}
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: bg + 'cc', padding: '4px 12px', borderRadius: 6 }}>
+      <span style={{ fontSize: 20, fontWeight: 800, color: '#fff', lineHeight: 1 }}>{value}</span>
+      <span style={{ fontSize: 10, color: '#ffdddd', fontWeight: 700, letterSpacing: 1 }}>{label}</span>
     </div>
   )
 }
 
-function Chip({ active, color, onClick, children }) {
+function PanelTitle({ icon, title, bg }) {
   return (
-    <span onClick={onClick} style={{
-      padding: '2px 7px', borderRadius: 10, fontSize: 9, cursor: 'pointer', letterSpacing: 0.5,
-      border: `1px solid ${active ? (color || '#00ff88') : '#0a3020'}`,
-      background: active ? (color || '#00ff88') + '22' : 'transparent',
-      color: active ? (color || '#00ff88') : '#4a6a60',
-    }}>{children}</span>
+    <div style={{ padding: '8px 12px', background: bg, color: '#fff', fontSize: 11, fontWeight: 700, letterSpacing: 1.5, display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+      {icon} {title}
+    </div>
   )
 }
 
-function Empty({ children }) {
-  return <div style={{ padding: 12, fontSize: 10, color: '#3a5a60' }}>{children}</div>
+function EmptyMsg({ children }) {
+  return <div style={{ padding: 16, fontSize: 13, color: '#778899', textAlign: 'center' }}>{children}</div>
 }
