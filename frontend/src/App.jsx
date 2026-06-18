@@ -163,6 +163,7 @@ export default function App() {
   const [events, setEvents] = useState([])
   const [alerts, setAlerts] = useState([])
   const [stats, setStats] = useState(null)
+  const [predictions, setPredictions] = useState([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [filterSev, setFilterSev] = useState(null)
@@ -170,16 +171,18 @@ export default function App() {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [r, e, a, s] = await Promise.all([
+      const [r, e, a, s, p] = await Promise.all([
         fetch(`${API}/api/radar`).then(x => x.json()),
         fetch(`${API}/api/events?limit=40`).then(x => x.json()),
         fetch(`${API}/api/alerts`).then(x => x.json()),
         fetch(`${API}/api/stats`).then(x => x.json()),
+        fetch(`${API}/api/predictions`).then(x => x.json()),
       ])
       setRadar(r)
       setEvents(Array.isArray(e) ? e : [])
       setAlerts(Array.isArray(a) ? a : [])
       setStats(s)
+      setPredictions(Array.isArray(p) ? p : [])
     } catch (err) { console.error(err) }
     finally { setLoading(false) }
   }, [])
@@ -294,19 +297,22 @@ export default function App() {
           </div>
         </div>
 
-        {/* Center — Radar */}
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#dde6f0', padding: 20 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
-            <RadarCanvas countryStats={radar?.country_stats} />
-            <div style={{ display: 'flex', gap: 20 }}>
-              {Object.entries(SEV).map(([key, cfg]) => (
-                <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                  <span style={{ width: 10, height: 10, borderRadius: '50%', background: cfg.color }} />
-                  <span style={{ fontSize: 12, fontWeight: 600, color: '#334455' }}>{cfg.label}</span>
-                </div>
-              ))}
+        {/* Center — Radar + Predictions */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#dde6f0', overflow: 'hidden' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, flexShrink: 0 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
+              <RadarCanvas countryStats={radar?.country_stats} />
+              <div style={{ display: 'flex', gap: 20 }}>
+                {Object.entries(SEV).map(([key, cfg]) => (
+                  <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                    <span style={{ width: 10, height: 10, borderRadius: '50%', background: cfg.color }} />
+                    <span style={{ fontSize: 12, fontWeight: 600, color: '#334455' }}>{cfg.label}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
+          <PredictionsPanel predictions={predictions} />
         </div>
 
         {/* Right panel — Events */}
@@ -343,6 +349,94 @@ export default function App() {
               })}
           </div>
         </div>
+      </div>
+    </div>
+  )
+}
+
+function probColor(val) {
+  if (val >= 75) return '#cc0000'
+  if (val >= 50) return '#cc5500'
+  if (val >= 30) return '#997700'
+  return '#226644'
+}
+
+function trendIcon(trend) {
+  if (trend === 'escalating') return '▲'
+  if (trend === 'declining') return '▼'
+  return '●'
+}
+
+function trendColor(trend) {
+  if (trend === 'escalating') return '#ff4444'
+  if (trend === 'declining') return '#44cc66'
+  return '#6688aa'
+}
+
+function PredictionsPanel({ predictions }) {
+  if (!predictions || predictions.length === 0) return null
+
+  const bars = [
+    { key: 'prob_72h', label: '72H' },
+    { key: 'prob_7d',  label: ' 7G' },
+    { key: 'prob_30d', label: '30G' },
+  ]
+
+  return (
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', background: '#0b1a2e', borderTop: '2px solid #1e3a5f' }}>
+      <div style={{
+        padding: '8px 16px', background: '#0d2240', display: 'flex', alignItems: 'center', gap: 8,
+        borderBottom: '1px solid #1e3a5f', flexShrink: 0
+      }}>
+        <span style={{ color: '#ff6644', fontSize: 14 }}>🎯</span>
+        <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: 2, color: '#4db8ff' }}>PREVISIONI ESCALATION</span>
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: '#4a6a8a' }}>{predictions.length} hotspot</span>
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '6px 0' }}>
+        {predictions.map((h, i) => (
+          <div key={h.country} style={{
+            padding: '10px 16px', borderBottom: '1px solid #152a45',
+            background: i % 2 === 0 ? '#0c1e36' : '#0b1a2e'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <span style={{ fontSize: 14, fontWeight: 800, color: '#ffffff', fontFamily: 'monospace' }}>{h.country}</span>
+              <span style={{ fontSize: 11, color: '#5588aa' }}>{h.region}</span>
+              <span style={{ marginLeft: 'auto', fontSize: 11, color: trendColor(h.trend), fontWeight: 700 }}>
+                {trendIcon(h.trend)} {h.trend === 'escalating' ? 'IN SALITA' : h.trend === 'declining' ? 'IN CALO' : 'STABILE'}
+              </span>
+            </div>
+            <div style={{ fontSize: 12, color: '#8899aa', marginBottom: 8, lineHeight: 1.4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {h.top_event}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {bars.map(({ key, label }) => {
+                const val = h[key] || 0
+                const col = probColor(val)
+                return (
+                  <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: '#5588aa', fontFamily: 'monospace', width: 28, flexShrink: 0 }}>{label}</span>
+                    <div style={{ flex: 1, height: 14, background: '#152a45', borderRadius: 3, overflow: 'hidden', position: 'relative' }}>
+                      <div style={{
+                        width: `${val}%`, height: '100%', borderRadius: 3,
+                        background: `linear-gradient(90deg, ${col}88, ${col})`,
+                        boxShadow: val >= 60 ? `0 0 8px ${col}66` : 'none',
+                        transition: 'width 0.6s ease'
+                      }} />
+                    </div>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: col, fontFamily: 'monospace', width: 32, textAlign: 'right', flexShrink: 0 }}>{val}%</span>
+                  </div>
+                )
+              })}
+            </div>
+            {h.factors && h.factors.length > 0 && (
+              <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {h.factors.map((f, fi) => (
+                  <span key={fi} style={{ fontSize: 10, color: '#6688aa', background: '#152a45', padding: '2px 8px', borderRadius: 10, border: '1px solid #1e3a5f' }}>{f}</span>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   )

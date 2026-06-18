@@ -1,6 +1,55 @@
 from typing import List, Dict, Optional
 from datetime import datetime
 
+SEV_SCORE = {'CRITICAL': 90, 'HIGH': 68, 'MEDIUM': 38, 'LOW': 12}
+
+COUNTRY_REGION = {
+    'UA': 'Europa Est', 'RU': 'Europa Est', 'BY': 'Europa Est', 'PL': 'Europa Est',
+    'IL': 'Medio Oriente', 'IR': 'Medio Oriente', 'SA': 'Medio Oriente', 'SY': 'Medio Oriente',
+    'IQ': 'Medio Oriente', 'YE': 'Medio Oriente', 'EG': 'Medio Oriente', 'LY': 'Medio Oriente',
+    'CN': 'Asia Est', 'KP': 'Asia Est', 'KR': 'Asia Est', 'JP': 'Asia Est', 'TW': 'Asia Est',
+    'IN': 'Asia Sud', 'PK': 'Asia Sud', 'AF': 'Asia Sud',
+    'MM': 'Asia Sud-Est', 'PH': 'Asia Sud-Est',
+    'US': 'Americhe', 'CA': 'Americhe', 'BR': 'Americhe', 'VE': 'Americhe',
+    'UK': 'Europa', 'FR': 'Europa', 'DE': 'Europa', 'IT': 'Europa',
+    'ES': 'Europa', 'TR': 'Europa',
+    'AU': 'Oceania', 'NZ': 'Oceania',
+    'NATO': 'Globale', 'EU': 'Europa', 'UN': 'Globale', 'MULTI': 'Globale',
+}
+
+REGIONAL_VOLATILITY = {
+    'Medio Oriente': 88, 'Europa Est': 82, 'Asia Est': 72, 'Asia Sud': 65,
+    'Africa': 62, 'Asia Sud-Est': 55, 'Globale': 48,
+    'Americhe': 30, 'Europa': 28, 'Oceania': 15,
+}
+
+
+def _calc_prob(base_sev: float, volatility: float, source_count: int, trend: str, horizon: str) -> int:
+    trend_mod = {'escalating': 12, 'stable': 0, 'declining': -10}.get(trend, 0)
+    source_boost = min(source_count * 4, 18)
+    if horizon == '72h':
+        p = base_sev * 0.72 + volatility * 0.12 + source_boost + trend_mod
+    elif horizon == '7d':
+        p = base_sev * 0.50 + volatility * 0.28 + source_boost * 0.8 + trend_mod * 0.75
+    else:  # 30d
+        p = base_sev * 0.30 + volatility * 0.48 + source_boost * 0.5 + trend_mod * 0.5
+    return max(5, min(97, round(p)))
+
+
+def _build_factors(sev_score: float, volatility: float, source_count: int, trend: str, region: str) -> List[str]:
+    factors = []
+    if sev_score >= 70:
+        factors.append("Evento ad alta gravità")
+    if volatility >= 75:
+        factors.append(f"{region}: zona volatile")
+    if source_count >= 3:
+        factors.append(f"{source_count} fonti concordanti")
+    if trend == 'escalating':
+        factors.append("Trend in escalation")
+    elif trend == 'declining':
+        factors.append("Trend in de-escalation")
+    return factors or ["Monitoraggio continuativo"]
+
 
 class RadarDB:
     def __init__(self):
@@ -87,3 +136,59 @@ class RadarDB:
             "by_region": by_region,
             "last_refresh": self.last_refresh,
         }
+
+    async def get_predictions(self) -> List[Dict]:
+        events = list(self.events.values())
+        if not events:
+            return []
+
+        # Group events by primary_country
+        country_events: Dict[str, List[Dict]] = {}
+        for event in events:
+            pc = event.get("primary_country") or (event.get("countries") or ["MULTI"])[0]
+            country_events.setdefault(pc, []).append(event)
+
+        hotspots = []
+        for country, evts in country_events.items():
+            sev_scores = [SEV_SCORE.get(e.get("severity", ""), 0) for e in evts]
+            avg_sev = sum(sev_scores) / len(sev_scores)
+            max_sev = float(max(sev_scores))
+
+            sources = {e.get("source", "") for e in evts}
+            source_count = len(sources)
+
+            # Trend: compare older vs newer half of events
+            half = len(evts) // 2
+            if half >= 1:
+                old_avg = sum(SEV_SCORE.get(e.get("severity", ""), 0) for e in evts[:half]) / half
+                new_avg = sum(SEV_SCORE.get(e.get("severity", ""), 0) for e in evts[half:]) / max(len(evts[half:]), 1)
+                if new_avg > old_avg + 8:
+                    trend = "escalating"
+                elif new_avg < old_avg - 8:
+                    trend = "declining"
+                else:
+                    trend = "stable"
+            else:
+                trend = "stable"
+
+            region = COUNTRY_REGION.get(country, "Globale")
+            volatility = float(REGIONAL_VOLATILITY.get(region, 48))
+
+            top_event = max(evts, key=lambda e: SEV_SCORE.get(e.get("severity", ""), 0))
+
+            hotspots.append({
+                "country": country,
+                "region": region,
+                "event_count": len(evts),
+                "source_count": source_count,
+                "trend": trend,
+                "top_severity": top_event.get("severity", "LOW"),
+                "top_event": (top_event.get("title_clean") or top_event.get("title", ""))[:80],
+                "prob_72h": _calc_prob(max_sev, volatility, source_count, trend, "72h"),
+                "prob_7d":  _calc_prob(avg_sev, volatility, source_count, trend, "7d"),
+                "prob_30d": _calc_prob(avg_sev * 0.85, volatility, source_count, trend, "30d"),
+                "factors": _build_factors(avg_sev, volatility, source_count, trend, region),
+            })
+
+        hotspots.sort(key=lambda h: h["prob_72h"], reverse=True)
+        return hotspots[:10]

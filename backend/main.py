@@ -48,6 +48,11 @@ async def get_stats():
     return await db.get_stats()
 
 
+@app.get("/api/predictions")
+async def get_predictions():
+    return await db.get_predictions()
+
+
 @app.post("/api/refresh")
 async def trigger_refresh(background_tasks: BackgroundTasks):
     background_tasks.add_task(scheduler.run_once)
