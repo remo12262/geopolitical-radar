@@ -22,8 +22,16 @@ SESSION_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
 
 serializer = URLSafeTimedSerializer(SESSION_SECRET)
 
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://geopolitical-radar-frontend.onrender.com")
+
 app = FastAPI(title="Geopolitical Radar API", version="1.0.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"], allow_credentials=True)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[FRONTEND_URL, "http://localhost:5173", "http://localhost:5174"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+    allow_credentials=True,
+)
 
 
 class LoginRequest(BaseModel):
