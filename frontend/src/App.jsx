@@ -2,6 +2,77 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8001'
 
+function LoginGate({ children }) {
+  const [authenticated, setAuthenticated] = useState(false)
+  const [checking, setChecking] = useState(true)
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    fetch(`${API}/api/events?limit=1`, { credentials: 'include' })
+      .then(r => {
+        if (r.ok) setAuthenticated(true)
+      })
+      .catch(() => {})
+      .finally(() => setChecking(false))
+  }, [])
+
+  const handleLogin = async (e) => {
+    e.preventDefault()
+    setLoading(true)
+    setError('')
+    try {
+      const res = await fetch(`${API}/api/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ password }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        localStorage.setItem('radar_token', data.token)
+        setAuthenticated(true)
+      } else {
+        setError('Password errata')
+      }
+    } catch {
+      setError('Errore di connessione')
+    }
+    setLoading(false)
+  }
+
+  if (checking) return (
+    <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', background: '#0a1f3d' }}>
+      <div style={{ color: '#4db8ff', fontSize: 16, fontWeight: 700, letterSpacing: 2 }}>VERIFICA ACCESSO...</div>
+    </div>
+  )
+
+  if (authenticated) return children
+
+  return (
+    <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', background: '#0a1f3d', fontFamily: 'system-ui, sans-serif' }}>
+      <form onSubmit={handleLogin} style={{ background: '#0d2a4a', padding: '40px 36px', borderRadius: 16, boxShadow: '0 8px 40px rgba(0,0,0,0.5)', minWidth: 320, textAlign: 'center', border: '1px solid #1e3a5f' }}>
+        <div style={{ fontSize: 28, fontWeight: 800, color: '#4db8ff', marginBottom: 6, letterSpacing: 2 }}>⬡ GEOPOLITICAL RADAR</div>
+        <div style={{ fontSize: 13, color: '#6688aa', marginBottom: 12 }}>Accesso riservato</div>
+        <div style={{ fontSize: 12, color: '#88aacc', marginBottom: 28, lineHeight: 1.5 }}>Chiedere a <a href="mailto:info@quantumhorizon.it" style={{ color: '#4db8ff', textDecoration: 'none' }}>info@quantumhorizon.it</a> la pw di accesso gratuita</div>
+        <input
+          type="password"
+          value={password}
+          onChange={e => setPassword(e.target.value)}
+          placeholder="Password"
+          autoFocus
+          style={{ width: '100%', padding: '12px 16px', fontSize: 15, border: '2px solid #1e3a5f', borderRadius: 8, background: '#081828', color: '#ffffff', outline: 'none', marginBottom: 16, boxSizing: 'border-box' }}
+        />
+        {error && <div style={{ color: '#ff5555', fontSize: 13, marginBottom: 12 }}>{error}</div>}
+        <button type="submit" disabled={loading} style={{ width: '100%', padding: '12px', fontSize: 15, fontWeight: 700, background: loading ? '#334' : '#1a6abf', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer' }}>
+          {loading ? 'Accesso...' : 'Entra'}
+        </button>
+      </form>
+    </div>
+  )
+}
+
 const POSITIONS = {
   US: [268, 0.62], CA: [278, 0.52], BR: [295, 0.74], VE: [302, 0.72],
   UK: [348, 0.40], FR: [355, 0.38], DE: [8, 0.36], IT: [14, 0.44],
@@ -158,7 +229,11 @@ function RadarCanvas({ countryStats }) {
   )
 }
 
-export default function App() {
+export default function AppWithAuth() {
+  return <LoginGate><App /></LoginGate>
+}
+
+function App() {
   const [radar, setRadar] = useState(null)
   const [events, setEvents] = useState([])
   const [alerts, setAlerts] = useState([])
@@ -169,14 +244,24 @@ export default function App() {
   const [filterSev, setFilterSev] = useState(null)
   const [filterType, setFilterType] = useState(null)
 
+  const authFetch = useCallback((url) => {
+    const token = localStorage.getItem('radar_token')
+    const opts = { credentials: 'include' }
+    if (token) opts.headers = { Authorization: `Bearer ${token}` }
+    return fetch(url, opts).then(r => {
+      if (r.status === 401) window.location.reload()
+      return r.json()
+    })
+  }, [])
+
   const fetchAll = useCallback(async () => {
     try {
       const [r, e, a, s, p] = await Promise.all([
-        fetch(`${API}/api/radar`).then(x => x.json()),
-        fetch(`${API}/api/events?limit=40`).then(x => x.json()),
-        fetch(`${API}/api/alerts`).then(x => x.json()),
-        fetch(`${API}/api/stats`).then(x => x.json()),
-        fetch(`${API}/api/predictions`).then(x => x.json()),
+        authFetch(`${API}/api/radar`),
+        authFetch(`${API}/api/events?limit=40`),
+        authFetch(`${API}/api/alerts`),
+        authFetch(`${API}/api/stats`),
+        authFetch(`${API}/api/predictions`),
       ])
       setRadar(r)
       setEvents(Array.isArray(e) ? e : [])
@@ -185,13 +270,16 @@ export default function App() {
       setPredictions(Array.isArray(p) ? p : [])
     } catch (err) { console.error(err) }
     finally { setLoading(false) }
-  }, [])
+  }, [authFetch])
 
   useEffect(() => { fetchAll() }, [fetchAll])
 
   const handleRefresh = async () => {
     setRefreshing(true)
-    await fetch(`${API}/api/refresh`, { method: 'POST' }).catch(() => {})
+    const token = localStorage.getItem('radar_token')
+    const opts = { method: 'POST', credentials: 'include' }
+    if (token) opts.headers = { Authorization: `Bearer ${token}` }
+    await fetch(`${API}/api/refresh`, opts).catch(() => {})
     setTimeout(() => { fetchAll(); setRefreshing(false) }, 4000)
   }
 
